@@ -1,40 +1,51 @@
-import dfa
+import torch
+import torch.optim as optim
 import dfa_samplers
+from utils import feature_inds, dfa2feat
+from min_string import compute_min_dist_string
+from loss import ContrastiveLoss
+from encoder import Encoder
+import matplotlib.pyplot as plt
 
-# 0. Let rad_sampler be a RAD DFA distribution
-rad_sampler = dfa_samplers.RADSampler(n_tokens=10)
+n_tokens = 10
+num_steps = 100_000
+learning_rate = 1e-5
+rad_sampler = dfa_samplers.RADSampler(n_tokens)
+in_feat_size = n_tokens + len(feature_inds)
+dfa_embed_size = 32
+model = Encoder(input_dim=in_feat_size, output_dim=dfa_embed_size)
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+criterion = ContrastiveLoss()
 
-# 1. Sample two distinct DFAs from rad_sampler, call dfa_l and dfa_r.
-dfa_l = rad_sampler.sample()
-dfa_r = rad_sampler.sample()
+# begin training loop here
+print(f'Starting {num_steps} steps of training...')
+model.train()
+training_losses = []
+for step in range(num_steps):
 
-# 2. Compute a minimum distinguishing string, w, dfa_l and dfa_r, e.g., using a shortestpath algorithm.
-# TODO
-# Hints
-# See https://github.com/mvcisback/dfa for helper functions and operations defined on DFAs.
+    dfa_l = rad_sampler.sample()
+    dfa_r = rad_sampler.sample()
+    w = compute_min_dist_string(dfa_l, dfa_r)
+    # print(f'Minimum Distinguishing String: {"".join(str(c) for c in w)}')
 
-# 3. Compute the embeddings for dfa_l and dfa_r, i.e., encoder(dfa_l) and encoder(dfa_r).
-# TODO
-# Hints
-# See https://github.com/RAD-Embeddings/rad-embeddings/blob/main/rad_embeddings/model.py for model used for the encoder.
-# See _obs2feat starting from line 24 in https://github.com/RAD-Embeddings/rad-embeddings/blob/main/rad_embeddings/utils/utils.py#L34 to see how to pass DFAs to the encoder.
+    l_visited_states = torch.tensor(list(dfa_l.trace(w)))
+    r_visited_states = torch.tensor(list(dfa_r.trace(w)))
+    dfa_l_embeddings = model(dfa2feat(dfa_l, n_tokens), l_visited_states)
+    dfa_r_embeddings = model(dfa2feat(dfa_r, n_tokens), r_visited_states)
 
-# 4. Compute the pairs of states visited by w and their corresonding embeddings.
-# TODO
-# Hints
-# From the encoder model instead of returning the embedding of the current state (as if https://github.com/RAD-Embeddings/rad-embeddings/blob/main/rad_embeddings/model.py#L44), return the embeddings for each visited state.
+    optimizer.zero_grad()
+    loss = criterion(dfa_l_embeddings, dfa_r_embeddings)
+    loss.backward()
+    optimizer.step()
 
-# 5. To compute loss(dfa_l, dfa_r), calculate their relative pair-wise l2-distance and return the maximum.
-# TODO
-# Hints
-# d = torch.norm(feat1 - feat2, p=2, dim=-1)
+    training_losses.append(loss.item())
+    if (step + 1) % 1000 == 0:
+        print(f'Finished training step {step + 1} with loss: {loss.item()}')
 
-# 6. Finally, compute the gradient of loss(dfa_l, dfa_r), to train encoder, e.g., using Adam.
-# TODO
-# Hints
-# Use pytorch for this
-
-# 7. Turn this procedure into a training loop
-# TODO
-# Hints
-# Sample batches of such problems and this in a loop.
+plt.plot([step for step in range(num_steps)], training_losses)
+plt.xlabel("Training Step")
+plt.ylabel("Loss")
+plt.yscale("log")
+plt.title("RL-Free Contrastive Loss of DFA Encoder")
+plt.grid(True)
+plt.show()
